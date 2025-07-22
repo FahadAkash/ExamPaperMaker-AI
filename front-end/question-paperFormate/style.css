@@ -1,0 +1,147 @@
+body {
+  font-family: "Noto Serif Bengali", "Siyam Rupali", "SolaimanLipi", serif;
+  background-color: #fff;
+  color: #000;
+  margin: 0;
+  padding: 0;
+  line-height: 1.8;
+  font-size: 18px;
+}
+
+.paper {
+  max-width: 850px;
+  margin: 30px auto;
+  padding: 40px;
+  border: 1px solid #000;
+}
+.section-title {
+  text-align: center;
+  font-size: 24px;
+  margin-bottom: 20px;
+}
+
+.header {
+  text-align: center;
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+.title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+}
+
+.question-block {
+  margin-bottom: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+  display: inline-block;
+}
+.question-item {
+  margin-bottom: 10px;
+  align-items: start;
+}
+
+.question-item .mark-view {
+    align-items: end;
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 5px;
+  background-color: #e0e0e0;
+  border-radius: 3px;
+}
+
+.title h2 {
+  margin: 0 auto;
+  text-align: center;
+  flex: 1;
+  font-weight: bold;
+}
+
+.title p {
+  margin: 0;
+  text-align: right;
+}
+h1,
+h2 {
+  text-align: center;
+  margin: 0;
+}
+
+h2 {
+  font-size: 22px;
+}
+
+.sub {
+  text-align: center;
+  font-style: italic;
+  margin: 10px 0 20px;
+}
+
+.digit {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  margin: 0 2px;
+  border: 2px solid #333;
+  text-align: center;
+  line-height: 24px;
+  font-weight: bold;
+  font-size: 16px;
+  border-radius: 4px; /* optional for rounded corners */
+}
+
+.info-main {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.info-main p {
+  margin: 10px auto;
+  text-align: center;
+  flex: 1;
+  left: 1%;
+}
+.info {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  margin-bottom: 20px;
+}
+
+.line {
+  border-top: 1px solid #000000;
+  margin: 20px 0;
+}
+
+.instructions {
+  padding: 15px;
+  border: 1px dashed #000;
+  background: #f9f9f9;
+  margin-bottom: 25px;
+}
+
+h3 {
+  text-decoration: underline;
+  font-size: 20px;
+  margin-bottom: 10px;
+}
+
+ol {
+  padding-left: 20px;
+}
+
+ol li {
+  margin-bottom: 20px;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 40px;
+  font-weight: bold;
+}
