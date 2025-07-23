@@ -1,8 +1,21 @@
 import { ChatMessage, GeneratedHTML, QuestionPaper, ClassConfig } from '@/types';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { generateText } from 'ai';
+import { loadQuestionHeaders } from '@/lib/questionHeaderFormat';
 
+const { questionFormat, questionPaperFormatMCQ } = loadQuestionHeaders();
+
+// import { questionFormat, questionPaperFormatMCQ } from '@/question-paperFormate/questionHeaderFormat';
 
 export class AIService {
   private static instance: AIService;
+  private googleAI: any;
+
+  private constructor() {
+    this.googleAI = createGoogleGenerativeAI({
+      apiKey: process.env.GOOGLE_API_KEY,
+    });
+  }
 
   static getInstance(): AIService {
     if (!AIService.instance) {
@@ -18,55 +31,36 @@ export class AIService {
     subject: string,
     previousMessages: ChatMessage[]
   ): Promise<{ response: string; questionPaper?: QuestionPaper; htmlOutput?: GeneratedHTML }> {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    const questionPaper = this.createQuestionPaper(message, classConfig, subject, documents);
-    const htmlOutput = this.generateQuestionPaperHTML(questionPaper);
-    return {
-      response: `I've generated a comprehensive question paper for ${classConfig.name} ${subject}. The paper includes multiple question types with proper marking scheme and instructions.`,
-      questionPaper,
-      htmlOutput
-    };
+    try {
+      // Generate question paper using AI
+      const questionPaper = await this.createQuestionPaper(message, classConfig, subject, documents);
+      const htmlOutput = this.generateQuestionPaperHTML(questionPaper);
+      
+      return {
+        response: `Successfully generated question paper for ${classConfig.name} ${subject}`,
+        questionPaper,
+        htmlOutput
+      };
+    } catch (error) {
+      console.error('Error generating question paper:', error);
+      return {
+        response: 'Failed to generate question paper. Please try again.',
+        questionPaper: undefined,
+        htmlOutput: undefined
+      };
+    }
   }
 
-  async regenerateSection(
-    sectionContent: string,
-    context: string,
-    classConfig: ClassConfig,
-    subject: string
-  ): Promise<{ response: string; regeneratedContent: string }> {
-    // Simulate API delay for regeneration
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Generate improved version of the selected content
-    const improvedContent = this.improveContent(sectionContent, context, classConfig, subject);
-
-    return {
-      response: `I've regenerated the selected content with improvements for better clarity and educational value.`,
-      regeneratedContent: improvedContent
-    };
-  }
-
-  private improveContent(content: string, context: string, classConfig: ClassConfig, subject: string): string {
-    // Simple content improvement logic - in real implementation, use AI API
-    const improvements = [
-      'Enhanced with clearer language and better structure',
-      'Improved with more specific examples and context',
-      'Refined for better understanding and engagement',
-      'Optimized for the target class level and subject'
-    ];
-
-    return `${content} (${improvements[Math.floor(Math.random() * improvements.length)]})`;
-  }
-
-  private createQuestionPaper(
+  private async createQuestionPaper(
     prompt: string,
     classConfig: ClassConfig,
     subject: string,
     documents: string[]
-  ): QuestionPaper {
+  ): Promise<QuestionPaper> {
     const topics = this.extractTopicsFromPrompt(prompt, documents);
-    const questionPaper: QuestionPaper = {
+    const sections = await this.generateSections(classConfig, subject, topics);
+    
+    return {
       id: Math.random().toString(36).substr(2, 9),
       className: classConfig.name,
       subject: subject,
@@ -74,24 +68,255 @@ export class AIService {
       timeLimit: classConfig.timeLimit,
       totalMarks: classConfig.totalMarks,
       instructions: this.generateInstructions(classConfig),
-      sections: this.generateSections(classConfig, subject, topics),
+      sections,
       generatedAt: new Date()
     };
+  }
 
-    return questionPaper;
+  private async generateSections(classConfig: ClassConfig, subject: string, topics: string[]) {
+    const sections = [];
+    const questionContext = this.getQuestionContext(classConfig);
+
+    // Section A - MCQs
+    if (classConfig.questionTypes.includes('MCQ')) {
+      const count = Math.min(20, Math.floor(classConfig.totalMarks * 0.2));
+      const questions = await this.generateAIQuestions(
+        subject,
+        topics,
+        count,
+        'mcq',
+        questionContext
+      );
+      sections.push({
+        id: 'section-a',
+        title: 'Section A - Multiple Choice Questions',
+        instructions: 'Choose the correct option for each question. Each question carries 1 mark.',
+        questions,
+        marks: count
+      });
+    }
+
+    // Section B - Short Answer Questions
+    if (classConfig.questionTypes.includes('Short Answer')) {
+      const count = 10;
+      const questions = await this.generateAIQuestions(
+        subject,
+        topics,
+        count,
+        'short',
+        questionContext
+      );
+      sections.push({
+        id: 'section-b',
+        title: 'Section B - Short Answer Questions',
+        instructions: `Answer any ${Math.floor(count * 0.8)} questions from this section. Each question carries 3 marks.`,
+        questions,
+        marks: Math.floor(count * 0.8) * 3
+      });
+    }
+
+    // Section C - Long Answer Questions
+    if (classConfig.questionTypes.includes('Long Answer')) {
+      const count = 6;
+      const questions = await this.generateAIQuestions(
+        subject,
+        topics,
+        count,
+        'long',
+        questionContext
+      );
+      sections.push({
+        id: 'section-c',
+        title: 'Section C - Long Answer Questions',
+        instructions: `Answer any ${Math.floor(count * 0.66)} questions from this section. Each question carries 5 marks.`,
+        questions,
+        marks: Math.floor(count * 0.66) * 5
+      });
+    }
+
+    return sections;
+  }
+
+  private async generateAIQuestions(
+    subject: string,
+    topics: string[],
+    count: number,
+    type: 'mcq' | 'short' | 'long',
+    context: string
+  ): Promise<any[]> {
+    const questionTypeMap = {
+      mcq: 'multiple choice',
+      short: 'short answer',
+      long: 'long answer'
+    };
+
+    const prompt = `
+${context}
+
+Generate ${count} ${questionTypeMap[type]} questions for ${subject} class students.
+Topics to cover: ${topics.join(', ')}
+Difficulty level: Medium
+Format: Strictly follow the format below:
+
+${type === 'mcq' ? questionPaperFormatMCQ.SSC : ''}
+
+For ${type} questions:
+1. [Question 1]
+2. [Question 2]
+...
+
+Important guidelines:
+- Questions should be in Bengali unless specified otherwise
+- For MCQ questions, provide 4 options labeled with ক, খ, গ, ঘ
+- Questions should be appropriate for the academic level
+- Avoid sensitive or controversial topics
+    `;
+
+    try {
+      const model = this.googleAI('gemini-1.5-flash');
+      const { text } = await generateText({ model, prompt });
+      return this.parseQuestions(text, type);
+    } catch (error) {
+      console.error('AI generation failed, using fallback questions:', error);
+      return this.getFallbackQuestions(subject, count, type);
+    }
+  }
+
+  private parseQuestions(text: string, type: string): any[] {
+    const questions = [];
+    const lines = text.split('\n');
+    let currentQuestion = '';
+
+    for (const line of lines) {
+      // Check if line starts with a number (question indicator)
+      if (/^\d+[\.\)]?\s/.test(line)) {
+        if (currentQuestion) {
+          questions.push(this.formatQuestion(currentQuestion, type));
+        }
+        currentQuestion = line.replace(/^\d+[\.\)]?\s/, '').trim();
+      } else if (currentQuestion) {
+        currentQuestion += ' ' + line.trim();
+      }
+    }
+
+    if (currentQuestion) {
+      questions.push(this.formatQuestion(currentQuestion, type));
+    }
+
+    return questions;
+  }
+
+  private formatQuestion(text: string, type: string): any {
+    const baseQuestion = {
+      id: Math.random().toString(36).substr(2, 6),
+      type,
+      question: text,
+      difficulty: 'medium' as const
+    };
+
+    if (type === 'mcq') {
+      // Extract MCQ options
+      const options = [];
+      const optionRegex = /[কখগঘ]\)\s*(.*?)(?=\s*(?:[কখগঘ]\)|$))/g;
+      let match;
+      let lastIndex = 0;
+      
+      while ((match = optionRegex.exec(text)) !== null) {
+        options.push(match[1].trim());
+        lastIndex = match.index + match[0].length;
+      }
+      
+      // Extract question text without options
+      const questionText = text.substring(0, lastIndex).replace(/\s*[কখগঘ]\)\s*.*/g, '').trim();
+      
+      return {
+        ...baseQuestion,
+        question: questionText,
+        options: options.length ? options : ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+        marks: 1
+      };
+    } else if (type === 'short') {
+      return {
+        ...baseQuestion,
+        marks: 3
+      };
+    } else {
+      return {
+        ...baseQuestion,
+        marks: 5
+      };
+    }
+  }
+
+  private getQuestionContext(classConfig: ClassConfig): string {
+    const level = classConfig.id.includes('ssc') ? 'SSC' :
+                 classConfig.id.includes('hsc') ? 'HSC' :
+                 classConfig.id.includes('bsc') ? 'BSC' : 'MSC';
+                 
+    return questionFormat.schoolQuestionHeader[level] || '';
+  }
+
+  private getFallbackQuestions(subject: string, count: number, type: 'mcq' | 'short' | 'long'): any[] {
+    const questions = [];
+    const subjects = {
+      'Mathematics': 'গণিত',
+      'Physics': 'পদার্থবিজ্ঞান',
+      'Chemistry': 'রসায়ন',
+      'Biology': 'জীববিজ্ঞান',
+      'Bangla': 'বাংলা',
+      'English': 'ইংরেজি',
+      'Bangladesh & Global Studies': 'বাংলাদেশ ও বিশ্বপরিচয়'
+    };
+
+    const subjectName = subjects[subject as keyof typeof subjects] || subject;
+
+    for (let i = 0; i < count; i++) {
+      const id = `${type}-${i + 1}`;
+      const question = `${i + 1}. ${subjectName} বিষয়ে ${type === 'mcq' ? 'বহুনির্বাচনি' : type === 'short' ? 'সংক্ষিপ্ত' : 'বিস্তারিত'} প্রশ্ন নম্বর ${i + 1}`;
+      
+      if (type === 'mcq') {
+        questions.push({
+          id,
+          type,
+          question,
+          options: [
+            'ক) প্রথম বিকল্প',
+            'খ) দ্বিতীয় বিকল্প',
+            'গ) তৃতীয় বিকল্প',
+            'ঘ) চতুর্থ বিকল্প'
+          ],
+          marks: 1,
+          difficulty: 'medium'
+        });
+      } else {
+        questions.push({
+          id,
+          type,
+          question,
+          marks: type === 'short' ? 3 : 5,
+          difficulty: 'medium'
+        });
+      }
+    }
+
+    return questions;
   }
 
   private extractTopicsFromPrompt(prompt: string, documents: string[]): string[] {
-    // Extract topics from prompt and documents
-    const commonTopics = {
-      'Mathematics': ['Algebra', 'Geometry', 'Arithmetic', 'Statistics', 'Probability'],
-      'Science': ['Physics', 'Chemistry', 'Biology', 'Environmental Science'],
-      'English': ['Grammar', 'Literature', 'Comprehension', 'Writing Skills'],
-      'Social Studies': ['History', 'Geography', 'Civics', 'Economics']
-    };
-
-    // Simple topic extraction - in real implementation, use NLP
-    return ['Chapter 1', 'Chapter 2', 'Chapter 3'];
+    // Simple extraction - in real implementation use NLP
+    const topicKeywords = [
+      'অধ্যায়', 'chapter', 'topic', 'unit', 'বিষয়', 
+      'পদার্থ', 'রসায়ন', 'গণিত', 'ইংরেজি', 'বাংলা'
+    ];
+    
+    const foundTopics = [];
+    for (const keyword of topicKeywords) {
+      if (prompt.toLowerCase().includes(keyword)) {
+        foundTopics.push(keyword.charAt(0).toUpperCase() + keyword.slice(1));
+      }
+    }
+    
+    return foundTopics.length > 0 ? foundTopics : ['Chapter 1', 'Chapter 2', 'Chapter 3'];
   }
 
   private generateInstructions(classConfig: ClassConfig): string[] {
@@ -141,295 +366,7 @@ export class AIService {
       );
     }
 
-
     return baseInstructions;
-  }
-
-  private generateSections(classConfig: ClassConfig, subject: string, topics: string[]) {
-    const sections = [];
-
-    // Section A - MCQs (if applicable)
-    if (classConfig.questionTypes.includes('MCQ')) {
-      sections.push({
-        id: 'section-a',
-        title: 'Section A - Multiple Choice Questions',
-        instructions: 'Choose the correct option for each question. Each question carries 1 mark.',
-        questions: this.generateMCQs(subject, topics, Math.min(20, Math.floor(classConfig.totalMarks * 0.2))),
-        marks: Math.min(20, Math.floor(classConfig.totalMarks * 0.2))
-      });
-    }
-
-    // Section B - Short Answer Questions
-    if (classConfig.questionTypes.includes('Short Answer')) {
-      sections.push({
-        id: 'section-b',
-        title: 'Section B - Short Answer Questions',
-        instructions: 'Answer any 8 questions from this section. Each question carries 3 marks.',
-        questions: this.generateShortAnswerQuestions(subject, topics, 10),
-        marks: 24
-      });
-    }
-
-    // Section C - Long Answer Questions
-    if (classConfig.questionTypes.includes('Long Answer')) {
-      sections.push({
-        id: 'section-c',
-        title: 'Section C - Long Answer Questions',
-        instructions: 'Answer any 4 questions from this section. Each question carries 5 marks.',
-        questions: this.generateLongAnswerQuestions(subject, topics, 6),
-        marks: 20
-      });
-    }
-
-    return sections;
-  }
-
-  private generateMCQs(subject: string, topics: string[], count: number) {
-    const questions = [];
-    const sampleQuestions = {
-      'Mathematics': [
-        { question: 'x² - 5x + 6 = 0 সমীকরণের মূল কোনটি?', options: ['2, 3', '1, 6', '-2, -3', '5, 1'], answer: 0 },
-        { question: 'একটি সমকোণী ত্রিভুজের অতিভুজ 5 সেমি এবং একটি বাহু 3 সেমি হলে অপর বাহুর দৈর্ঘ্য কত?', options: ['4 সেমি', '8 সেমি', '2 সেমি', '6 সেমি'], answer: 0 },
-        { question: 'log₁₀ 100 এর মান কত?', options: ['1', '2', '10', '100'], answer: 1 }
-      ],
-      'Physics': [
-        { question: 'আলোর বেগ কত?', options: ['3×10⁸ m/s', '3×10⁶ m/s', '3×10¹⁰ m/s', '3×10⁴ m/s'], answer: 0 },
-        { question: 'নিউটনের প্রথম সূত্রের অপর নাম কী?', options: ['জড়তার সূত্র', 'ত্বরণের সূত্র', 'ক্রিয়া-প্রতিক্রিয়ার সূত্র', 'মহাকর্ষের সূত্র'], answer: 0 },
-        { question: 'শব্দের বেগ বাতাসে কত?', options: ['332 m/s', '3×10⁸ m/s', '1500 m/s', '5000 m/s'], answer: 0 }
-      ],
-      'Chemistry': [
-        { question: 'পানির রাসায়নিক সংকেত কী?', options: ['H₂O', 'CO₂', 'NaCl', 'O₂'], answer: 0 },
-        { question: 'অক্সিজেনের পারমাণবিক সংখ্যা কত?', options: ['6', '7', '8', '9'], answer: 2 },
-        { question: 'কোনটি একটি নিষ্ক্রিয় গ্যাস?', options: ['অক্সিজেন', 'নাইট্রোজেন', 'আর্গন', 'কার্বন ডাই-অক্সাইড'], answer: 2 }
-      ],
-      'Biology': [
-        { question: 'সালোকসংশ্লেষণ প্রক্রিয়ায় কোন গ্যাস নির্গত হয়?', options: ['অক্সিজেন', 'কার্বন ডাই-অক্সাইড', 'নাইট্রোজেন', 'হাইড্রোজেন'], answer: 0 },
-        { question: 'মানুষের হৃৎপিণ্ডে কয়টি প্রকোষ্ঠ আছে?', options: ['2টি', '3টি', '4টি', '5টি'], answer: 2 },
-        { question: 'DNA এর পূর্ণরূপ কী?', options: ['Deoxyribonucleic Acid', 'Dinitric Acid', 'Diacetic Acid', 'Deoxyribose Acid'], answer: 0 }
-      ],
-      'Bangla': [
-        { question: '"পদ্মা নদীর মাঝি" উপন্যাসের লেখক কে?', options: ['মানিক বন্দ্যোপাধ্যায়', 'বিভূতিভূষণ বন্দ্যোপাধ্যায়', 'তারাশঙ্কর বন্দ্যোপাধ্যায়', 'সতীনাথ ভাদুড়ী'], answer: 0 },
-        { question: 'বাংলা সাহিত্যের প্রথম মহাকাব্য কোনটি?', options: ['মেঘনাদবধ কাব্য', 'বৃত্রসংহার', 'শর্মিষ্ঠা', 'কৃষ্ণকুমারী'], answer: 0 },
-        { question: '"সংশপ্তক" শব্দের অর্থ কী?', options: ['প্রতিজ্ঞাবদ্ধ যোদ্ধা', 'বীর যোদ্ধা', 'সাহসী যোদ্ধা', 'দক্ষ যোদ্ধা'], answer: 0 }
-      ],
-      'English': [
-        { question: 'Which of the following is a noun?', options: ['Run', 'Beautiful', 'Book', 'Quickly'], answer: 2 },
-        { question: 'What is the past tense of "go"?', options: ['Gone', 'Going', 'Went', 'Goes'], answer: 2 },
-        { question: 'The synonym of "Abundant" is:', options: ['Scarce', 'Plentiful', 'Limited', 'Rare'], answer: 1 }
-      ],
-      'Bangladesh & Global Studies': [
-        { question: 'বাংলাদেশের স্বাধীনতা দিবস কবে?', options: ['২৬ মার্চ', '১৬ ডিসেম্বর', '২১ ফেব্রুয়ারি', '১৪ এপ্রিল'], answer: 0 },
-        { question: 'বাংলাদেশের জাতীয় ফুল কোনটি?', options: ['গোলাপ', 'শাপলা', 'জুঁই', 'বেলি'], answer: 1 },
-        { question: 'বাংলাদেশের সর্ববৃহৎ নদী কোনটি?', options: ['পদ্মা', 'মেঘনা', 'যমুনা', 'ব্রহ্মপুত্র'], answer: 0 }
-      ]
-    };
-
-    const subjectQuestions = sampleQuestions[subject as keyof typeof sampleQuestions] || sampleQuestions['Physics'];
-
-    for (let i = 0; i < count; i++) {
-      const baseQuestion = subjectQuestions[i % subjectQuestions.length];
-      questions.push({
-        id: `mcq-${i + 1}`,
-        type: 'mcq' as const,
-        question: `${i + 1}. ${baseQuestion.question}`,
-        options: baseQuestion.options.map((option, index) => `${String.fromCharCode(2453 + index)}) ${option}`), // ক, খ, গ, ঘ
-        marks: 1,
-        difficulty: 'medium' as const
-      });
-    }
-
-    return questions;
-  }
-
-  private generateShortAnswerQuestions(subject: string, topics: string[], count: number) {
-    const questions = [];
-    const sampleQuestions = {
-      'Mathematics': [
-        '2x + 5 = 15 সমীকরণটি সমাধান করো।',
-        'একটি আয়তক্ষেত্রের দৈর্ঘ্য 8 সেমি এবং প্রস্থ 5 সেমি হলে এর ক্ষেত্রফল নির্ণয় করো।',
-        'মূলদ ও অমূলদ সংখ্যার মধ্যে পার্থক্য লেখো।'
-      ],
-      'Physics': [
-        'উদ্ভিদের সালোকসংশ্লেষণ প্রক্রিয়া ব্যাখ্যা করো।',
-        'নিউটনের গতিসূত্রগুলো বিবৃত করো।',
-        'পরমাণুর গঠন বর্ণনা করো।'
-      ],
-      'Chemistry': [
-        'অ্যাসিড ও ক্ষারের মধ্যে পার্থক্য লেখো।',
-        'রাসায়নিক বন্ধনের প্রকারভেদ আলোচনা করো।',
-        'জারণ-বিজারণ বিক্রিয়া কী? উদাহরণসহ ব্যাখ্যা করো।'
-      ],
-      'Biology': [
-        'কোষ বিভাজনের প্রকারভেদ ও গুরুত্ব আলোচনা করো।',
-        'মানুষের পরিপাকতন্ত্রের বর্ণনা দাও।',
-        'বংশগতির সূত্রগুলো ব্যাখ্যা করো।'
-      ],
-      'Bangla': [
-        'বাংলা সাহিত্যে রবীন্দ্রনাথ ঠাকুরের অবদান আলোচনা করো।',
-        'বাংলা ভাষার উৎপত্তি ও বিকাশ সম্পর্কে লেখো।',
-        'আধুনিক বাংলা কবিতার বৈশিষ্ট্য আলোচনা করো।'
-      ],
-      'English': [
-        'Write a paragraph about the importance of education.',
-        'Explain the difference between a simile and a metaphor with examples.',
-        'Describe the role of technology in modern education.'
-      ],
-      'Bangladesh & Global Studies': [
-        'বাংলাদেশের মুক্তিযুদ্ধের কারণ ও ফলাফল আলোচনা করো।',
-        'বাংলাদেশের ভৌগোলিক অবস্থান ও জলবায়ু বর্ণনা করো।',
-        'জাতিসংঘের গঠন ও কার্যাবলী আলোচনা করো।'
-      ]
-    };
-
-    const subjectQuestions = sampleQuestions[subject as keyof typeof sampleQuestions] || sampleQuestions['Physics'];
-
-    for (let i = 0; i < count; i++) {
-      questions.push({
-        id: `short-${i + 1}`,
-        type: 'short' as const,
-        question: `${i + 1}. ${subjectQuestions[i % subjectQuestions.length]}`,
-        marks: 3,
-        difficulty: 'medium' as const
-      });
-    }
-
-    return questions;
-  }
-
-  private generateLongAnswerQuestions(subject: string, topics: string[], count: number) {
-    const questions = [];
-    const sampleQuestions = {
-      'Mathematics': [
-        'প্রমাণ করো যে, ত্রিভুজের তিন কোণের সমষ্টি 180°।',
-        'x² - 5x + 6 = 0 দ্বিঘাত সমীকরণটি উৎপাদকে বিশ্লেষণ পদ্ধতিতে সমাধান করো।',
-        'সম্ভাব্যতার ধারণা উদাহরণসহ ব্যাখ্যা করো।'
-      ],
-      'Physics': [
-        'মানুষের পরিপাকতন্ত্রের একটি পরিচ্ছন্ন চিহ্নিত চিত্রসহ বর্ণনা দাও।',
-        'জল চক্র এবং প্রকৃতিতে এর গুরুত্ব ব্যাখ্যা করো।',
-        'গ্লোবাল ওয়ার্মিং কী? এর কারণ ও প্রভাব আলোচনা করো।'
-      ],
-      'Chemistry': [
-        'জৈব রসায়নের মূলনীতিগুলো বিস্তারিত আলোচনা করো।',
-        'তড়িৎ বিশ্লেষণের নীতি ও প্রয়োগ ব্যাখ্যা করো।',
-        'পর্যায় সারণির আধুনিক রূপ ও এর বৈশিষ্ট্য আলোচনা করো।'
-      ],
-      'Biology': [
-        'ফটোসিনথেসিস প্রক্রিয়ার বিস্তারিত বিবরণ দাও।',
-        'মানুষের রক্ত সংবহনতন্ত্রের গঠন ও কার্যাবলী আলোচনা করো।',
-        'বিবর্তনবাদের মূল তত্ত্বগুলো ব্যাখ্যা করো।'
-      ],
-      'Bangla': [
-        'বাংলা সাহিত্যে মধুসূদন দত্তের অবদান মূল্যায়ন করো।',
-        'আধুনিক বাংলা গদ্যের বিকাশে বঙ্কিমচন্দ্রের ভূমিকা আলোচনা করো।',
-        'বাংলা ভাষা আন্দোলনের ইতিহাস ও তাৎপর্য বিশ্লেষণ করো।'
-      ],
-      'English': [
-        'Write an essay on "The Role of Technology in Education".',
-        'Analyze the character development in Shakespeare\'s Hamlet.',
-        'Discuss the theme of social justice in modern literature with examples.'
-      ],
-      'Bangladesh & Global Studies': [
-        'বাংলাদেশের অর্থনৈতিক উন্নয়নে কৃষিখাতের ভূমিকা বিশ্লেষণ করো।',
-        'দক্ষিণ এশিয়ার রাজনৈতিক পরিস্থিতি ও বাংলাদেশের অবস্থান আলোচনা করো।',
-        'জলবায়ু পরিবর্তনের প্রভাব ও বাংলাদেশের করণীয় নিয়ে আলোচনা করো।'
-      ]
-    };
-
-    const subjectQuestions = sampleQuestions[subject as keyof typeof sampleQuestions] || sampleQuestions['Physics'];
-
-    for (let i = 0; i < count; i++) {
-      questions.push({
-        id: `long-${i + 1}`,
-        type: 'long' as const,
-        question: `${i + 1}. ${subjectQuestions[i % subjectQuestions.length]}`,
-        marks: 5,
-        difficulty: 'hard' as const
-      });
-    }
-
-    return questions;
-  }
-
-  private generateCreativeQuestions(subject: string, topics: string[], count: number) {
-    const questions = [];
-    const sampleCreativeQuestions = {
-      'Mathematics': [
-        {
-          stem: 'একটি ত্রিভুজের তিনটি বাহুর দৈর্ঘ্য যথাক্রমে 3 সেমি, 4 সেমি এবং 5 সেমি।',
-          info: 'জ্যামিতিতে ত্রিভুজ একটি গুরুত্বপূর্ণ আকৃতি। বিভিন্ন ধরনের ত্রিভুজের বিভিন্ন বৈশিষ্ট্য রয়েছে।',
-          subquestions: [
-            'ক) ত্রিভুজটি কী ধরনের ত্রিভুজ? (১ নম্বর)',
-            'খ) ত্রিভুজটির ক্ষেত্রফল নির্ণয় করো। (২ নম্বর)',
-            'গ) ত্রিভুজটির পরিসীমা ও ক্ষেত্রফলের অনুপাত নির্ণয় করো। (৩ নম্বর)',
-            'ঘ) এই ত্রিভুজের অনুরূপ আরেকটি ত্রিভুজের বাহুগুলো দ্বিগুণ হলে ক্ষেত্রফল কত গুণ হবে? গাণিতিক যুক্তিসহ ব্যাখ্যা করো। (৪ নম্বর)'
-          ]
-        }
-      ],
-      'Physics': [
-        {
-          stem: 'একটি গাড়ি স্থির অবস্থা থেকে 2 m/s² ত্বরণে চলতে শুরু করল।',
-          info: 'গতিবিদ্যায় ত্বরণ একটি গুরুত্বপূর্ণ রাশি। এটি বেগ পরিবর্তনের হার নির্দেশ করে।',
-          subquestions: [
-            'ক) ত্বরণ কাকে বলে? (১ নম্বর)',
-            'খ) ৫ সেকেন্ড পর গাড়িটির বেগ কত হবে? (২ নম্বর)',
-            'গ) প্রথম ১০ সেকেন্ডে গাড়িটি কত দূরত্ব অতিক্রম করবে? (৩ নম্বর)',
-            'ঘ) গাড়িটি যদি ১০ সেকেন্ড পর ব্রেক করে 3 m/s² মন্দনে থামে, তাহলে মোট কত দূরত্ব অতিক্রম করবে? গাণিতিক বিশ্লেষণসহ ব্যাখ্যা করো। (৪ নম্বর)'
-          ]
-        }
-      ]
-    };
-
-    const subjectQuestions = sampleCreativeQuestions[subject as keyof typeof sampleCreativeQuestions] || sampleCreativeQuestions['Physics'];
-
-    for (let i = 0; i < count; i++) {
-      const baseQuestion = subjectQuestions[i % subjectQuestions.length];
-      questions.push({
-        id: `creative-${i + 1}`,
-        type: 'creative' as const,
-        question: `${i + 1}. <div class="creative-question">
-          <div class="creative-stem">${baseQuestion.stem}</div>
-          <div class="creative-info">${baseQuestion.info}</div>
-          <div class="creative-subquestions">
-            ${baseQuestion.subquestions.map(sq => `<div class="subquestion">${sq}</div>`).join('')}
-          </div>
-        </div>`,
-        marks: 10,
-        difficulty: 'medium' as const
-      });
-    }
-
-    return questions;
-  }
-
-  private generateStructuredQuestions(subject: string, topics: string[], count: number) {
-    const questions = [];
-    const sampleStructuredQuestions = {
-      'Physics': [
-        'তড়িৎ প্রবাহ ও রোধের মধ্যে সম্পর্ক ব্যাখ্যা করো। ওহমের সূত্র প্রয়োগ করে একটি সমস্যা সমাধান করো।',
-        'আলোর প্রতিফলন ও প্রতিসরণের মধ্যে পার্থক্য লেখো। স্নেলের সূত্র বিবৃত করো।',
-        'তাপ ও তাপমাত্রার মধ্যে পার্থক্য আলোচনা করো। তাপ পরিবহনের পদ্ধতিগুলো ব্যাখ্যা করো।'
-      ],
-      'Chemistry': [
-        'অ্যাসিড ও ক্ষারের বৈশিষ্ট্য তুলনা করো। pH স্কেলের গুরুত্ব ব্যাখ্যা করো।',
-        'জৈব যৌগের শ্রেণিবিভাগ আলোচনা করো। হাইড্রোকার্বনের প্রকারভেদ বর্ণনা করো।',
-        'রাসায়নিক বিক্রিয়ার হার নির্ধারণকারী উপাদানগুলো আলোচনা করো।'
-      ]
-    };
-
-    const subjectQuestions = sampleStructuredQuestions[subject as keyof typeof sampleStructuredQuestions] || sampleStructuredQuestions['Physics'];
-
-    for (let i = 0; i < count; i++) {
-      questions.push({
-        id: `structured-${i + 1}`,
-        type: 'structured' as const,
-        question: `${i + 1}. ${subjectQuestions[i % subjectQuestions.length]}`,
-        marks: 10,
-        difficulty: 'medium' as const
-      });
-    }
-
-    return questions;
   }
 
   private generateQuestionPaperHTML(questionPaper: QuestionPaper): GeneratedHTML {
@@ -465,7 +402,7 @@ export class AIService {
   </div>
 
   ${questionPaper.sections.map(section => `
-    <section class="question-section">
+    <section class="question-section ${section.id === 'section-a' ? 'mcq-section' : ''}">
       <div class="section-header">
         <h3>${section.title}</h3>
         <span class="section-marks">[${section.marks} নম্বর]</span>
@@ -497,6 +434,7 @@ export class AIService {
     <p>*** প্রশ্নপত্র সমাপ্ত ***</p>
   </footer>
 </div>`;
+
     const css = `
 @page {
   margin: 1in;
@@ -504,7 +442,7 @@ export class AIService {
 }
 
 .question-paper {
-  font-family: 'Times New Roman', serif;
+  font-family: 'Kalpurush', 'Times New Roman', serif;
   max-width: 8.5in;
   margin: 0 auto;
   padding: 20px;
@@ -707,39 +645,6 @@ export class AIService {
   font-size: 12pt;
 }
 
-/* Creative Question Styling */
-.creative-question {
-  border: 1px solid #ddd;
-  margin: 15px 0;
-  padding: 15px;
-  background: #fafafa;
-}
-
-.creative-stem {
-  font-weight: bold;
-  margin-bottom: 10px;
-  padding: 8px;
-  background: #e8f4f8;
-  border-left: 4px solid #2196F3;
-}
-
-.creative-info {
-  margin: 10px 0;
-  padding: 10px;
-  background: #f0f8e8;
-  border-left: 4px solid #4CAF50;
-  font-style: italic;
-}
-
-.creative-subquestions {
-  margin-top: 15px;
-}
-
-.creative-subquestions .subquestion {
-  margin: 8px 0;
-  padding-left: 15px;
-}
-
 /* MCQ specific styling for Bangladesh format */
 .mcq-section .options {
   margin: 8px 0 8px 25px;
@@ -769,16 +674,70 @@ export class AIService {
     return { html: html, css: css };
   }
 
+  async regenerateSection(
+    sectionContent: string,
+    context: string,
+    classConfig: ClassConfig,
+    subject: string
+  ): Promise<{ response: string; regeneratedContent: string }> {
+    try {
+      const prompt = `
+${this.getQuestionContext(classConfig)}
+
+Regenerate the following section content for ${classConfig.name} ${subject}:
+${context}
+
+Current content:
+${sectionContent}
+
+Improvements needed:
+- Enhance clarity and educational value
+- Ensure alignment with curriculum
+- Maintain appropriate difficulty level
+- Add more context where needed
+      `;
+
+      const model = this.googleAI('gemini-1.5-flash');
+      const { text } = await generateText({ model, prompt });
+      
+      return {
+        response: 'Section successfully regenerated with improvements',
+        regeneratedContent: text
+      };
+    } catch (error) {
+      console.error('Error regenerating section:', error);
+      return {
+        response: 'Failed to regenerate section. Using original content.',
+        regeneratedContent: sectionContent
+      };
+    }
+  }
+
   async generateResponse(
     message: string,
     documents: string[],
     previousMessages: ChatMessage[]
   ): Promise<{ response: string; htmlOutput?: GeneratedHTML }> {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const prompt = `
+You are AXAM, an expert AI assistant and exceptional senior Teacher with vast knowledge across multiple subjects.
+User message: ${message}
+Previous conversation context: ${previousMessages.slice(-3).map(m => m.content).join('\n')}
+      `;
 
-    return {
-      response: "I can help you generate question papers! Please select a class and subject from the dropdown menus, then use the question patterns or describe what type of questions you'd like me to create."
-    };
+      const model = this.googleAI('gemini-1.5-flash');
+      const { text } = await generateText({ model, prompt });
+      
+      return {
+        response: text,
+        htmlOutput: undefined
+      };
+    } catch (error) {
+      console.error('Error generating response:', error);
+      return {
+        response: "I can help you generate question papers! Please select a class and subject from the dropdown menus, then use the question patterns or describe what type of questions you'd like me to create.",
+        htmlOutput: undefined
+      };
+    }
   }
 }
