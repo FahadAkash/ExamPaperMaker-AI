@@ -1,9 +1,7 @@
 import { ChatMessage, GeneratedHTML, QuestionPaper, ClassConfig } from '@/types';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText } from 'ai';
-import { loadQuestionHeaders } from '@/lib/questionHeaderFormat';
 
-const { questionFormat, questionPaperFormatMCQ } = loadQuestionHeaders();
 
 // import { questionFormat, questionPaperFormatMCQ } from '@/question-paperFormate/questionHeaderFormat';
 
@@ -158,7 +156,7 @@ Topics to cover: ${topics.join(', ')}
 Difficulty level: Medium
 Format: Strictly follow the format below:
 
-${type === 'mcq' ? questionPaperFormatMCQ.SSC : ''}
+
 
 For ${type} questions:
 1. [Question 1]
@@ -248,13 +246,13 @@ Important guidelines:
     }
   }
 
-  private getQuestionContext(classConfig: ClassConfig): string {
-    const level = classConfig.id.includes('ssc') ? 'SSC' :
-                 classConfig.id.includes('hsc') ? 'HSC' :
-                 classConfig.id.includes('bsc') ? 'BSC' : 'MSC';
+  // private getQuestionContext(classConfig: ClassConfig): string {
+  //   const level = classConfig.id.includes('ssc') ? 'SSC' :
+  //                classConfig.id.includes('hsc') ? 'HSC' :
+  //                classConfig.id.includes('bsc') ? 'BSC' : 'MSC';
                  
-    return questionFormat.schoolQuestionHeader[level] || '';
-  }
+  //   return questionFormat.schoolQuestionHeader[level] || '';
+  // }
 
   private getFallbackQuestions(subject: string, count: number, type: 'mcq' | 'short' | 'long'): any[] {
     const questions = [];
@@ -682,7 +680,7 @@ Important guidelines:
   ): Promise<{ response: string; regeneratedContent: string }> {
     try {
       const prompt = `
-${this.getQuestionContext(classConfig)}
+
 
 Regenerate the following section content for ${classConfig.name} ${subject}:
 ${context}

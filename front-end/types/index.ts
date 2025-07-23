@@ -6,6 +6,11 @@ export interface Document {
   uploadedAt: Date;
 }
 
+export interface questionPattern{
+  questionType : string ,
+  
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
