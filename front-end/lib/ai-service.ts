@@ -766,7 +766,7 @@ export class AIService {
   font-size: 12pt;
 }`;
 
-    return { html: html, css };
+    return { html: html, css: css };
   }
 
   async generateResponse(
