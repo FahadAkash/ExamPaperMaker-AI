@@ -1,18 +1,22 @@
 import { ChatMessage, GeneratedHTML, QuestionPaper, ClassConfig } from '@/types';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText } from 'ai';
-
-
-// import { questionFormat, questionPaperFormatMCQ } from '@/question-paperFormate/questionHeaderFormat';
+import { questionPatternContextSSCORHSC } from './questionPaperContext';
 
 export class AIService {
   private static instance: AIService;
   private googleAI: any;
 
   private constructor() {
-    this.googleAI = createGoogleGenerativeAI({
-      apiKey: process.env.GOOGLE_API_KEY,
-    });
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || 
+                  process.env.GOOGLE_API_KEY || 
+                  'AIzaSyACqVW_-0J1657A0DLT0kARchGLYJvXvLM';
+    
+    if (!apiKey.trim()) {
+      throw new Error('Google Generative AI API key is missing');
+    }
+
+    this.googleAI = createGoogleGenerativeAI({ apiKey });
   }
 
   static getInstance(): AIService {
@@ -30,10 +34,9 @@ export class AIService {
     previousMessages: ChatMessage[]
   ): Promise<{ response: string; questionPaper?: QuestionPaper; htmlOutput?: GeneratedHTML }> {
     try {
-      // Generate question paper using AI
       const questionPaper = await this.createQuestionPaper(message, classConfig, subject, documents);
       const htmlOutput = this.generateQuestionPaperHTML(questionPaper);
-      
+
       return {
         response: `Successfully generated question paper for ${classConfig.name} ${subject}`,
         questionPaper,
@@ -57,9 +60,9 @@ export class AIService {
   ): Promise<QuestionPaper> {
     const topics = this.extractTopicsFromPrompt(prompt, documents);
     const sections = await this.generateSections(classConfig, subject, topics);
-    
+
     return {
-      id: Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).substring(2, 11),
       className: classConfig.name,
       subject: subject,
       title: `${classConfig.name} ${subject} - Examination`,
@@ -135,6 +138,28 @@ export class AIService {
     return sections;
   }
 
+  async generateResponseAI() : Promise<{ response: string; htmlOutput?: GeneratedHTML }>{
+    const prompt = `
+ ${questionPatternContextSSCORHSC("SSC")}
+ `;
+    console.log('Generating response with prompt:', prompt);
+    try {
+      const model = this.googleAI('gemini-1.5-flash');
+      const { text } = await generateText({ model, prompt });
+      console.log('AI response:', text);
+      return {
+        response: text,
+        htmlOutput: undefined
+      };
+    } catch (error) {
+      console.error('AI generation failed, using fallback questions:', error);
+      return {
+        response: 'Failed to generate question paper. Please try again.',
+        htmlOutput: undefined
+      };
+    }
+  }
+
   private async generateAIQuestions(
     subject: string,
     topics: string[],
@@ -150,29 +175,13 @@ export class AIService {
 
     const prompt = `
 ${context}
-
-Generate ${count} ${questionTypeMap[type]} questions for ${subject} class students.
-Topics to cover: ${topics.join(', ')}
-Difficulty level: Medium
-Format: Strictly follow the format below:
-
-
-
-For ${type} questions:
-1. [Question 1]
-2. [Question 2]
-...
-
-Important guidelines:
-- Questions should be in Bengali unless specified otherwise
-- For MCQ questions, provide 4 options labeled with ক, খ, গ, ঘ
-- Questions should be appropriate for the academic level
-- Avoid sensitive or controversial topics
-    `;
+${questionPatternContextSSCORHSC("SSC")}
+ `;
 
     try {
       const model = this.googleAI('gemini-1.5-flash');
       const { text } = await generateText({ model, prompt });
+      console.log('AI response:', text);
       return this.parseQuestions(text, type);
     } catch (error) {
       console.error('AI generation failed, using fallback questions:', error);
@@ -184,53 +193,50 @@ Important guidelines:
     const questions = [];
     const lines = text.split('\n');
     let currentQuestion = '';
+    let currentOptions: string[] = [];
 
     for (const line of lines) {
       // Check if line starts with a number (question indicator)
       if (/^\d+[\.\)]?\s/.test(line)) {
         if (currentQuestion) {
-          questions.push(this.formatQuestion(currentQuestion, type));
+          questions.push(this.formatQuestion(currentQuestion, currentOptions, type));
         }
-        currentQuestion = line.replace(/^\d+[\.\)]?\s/, '').trim();
-      } else if (currentQuestion) {
+        currentQuestion = line.trim();
+        currentOptions = [];
+      } 
+      // Detect MCQ options (Bengali or English)
+      else if (/^[a-d]\)|\s*[কখগঘ]\)/.test(line)) {
+        currentOptions.push(line.trim());
+      }
+      else if (currentQuestion) {
         currentQuestion += ' ' + line.trim();
       }
     }
 
     if (currentQuestion) {
-      questions.push(this.formatQuestion(currentQuestion, type));
+      questions.push(this.formatQuestion(currentQuestion, currentOptions, type));
     }
 
-    return questions;
+    return questions.slice(0, 20); // Ensure we don't exceed limit
   }
 
-  private formatQuestion(text: string, type: string): any {
+  private formatQuestion(text: string, options: string[], type: string): any {
     const baseQuestion = {
-      id: Math.random().toString(36).substr(2, 6),
+      id: Math.random().toString(36).substring(2, 8),
       type,
-      question: text,
+      question: text.replace(/^\d+[\.\)]?\s/, '').trim(), // Remove question number
       difficulty: 'medium' as const
     };
 
     if (type === 'mcq') {
-      // Extract MCQ options
-      const options = [];
-      const optionRegex = /[কখগঘ]\)\s*(.*?)(?=\s*(?:[কখগঘ]\)|$))/g;
-      let match;
-      let lastIndex = 0;
-      
-      while ((match = optionRegex.exec(text)) !== null) {
-        options.push(match[1].trim());
-        lastIndex = match.index + match[0].length;
-      }
-      
-      // Extract question text without options
-      const questionText = text.substring(0, lastIndex).replace(/\s*[কখগঘ]\)\s*.*/g, '').trim();
-      
       return {
         ...baseQuestion,
-        question: questionText,
-        options: options.length ? options : ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+        options: options.length > 0 ? options : [
+          'ক) প্রথম বিকল্প',
+          'খ) দ্বিতীয় বিকল্প',
+          'গ) তৃতীয় বিকল্প',
+          'ঘ) চতুর্থ বিকল্প'
+        ],
         marks: 1
       };
     } else if (type === 'short') {
@@ -246,13 +252,13 @@ Important guidelines:
     }
   }
 
-  // private getQuestionContext(classConfig: ClassConfig): string {
-  //   const level = classConfig.id.includes('ssc') ? 'SSC' :
-  //                classConfig.id.includes('hsc') ? 'HSC' :
-  //                classConfig.id.includes('bsc') ? 'BSC' : 'MSC';
-                 
-  //   return questionFormat.schoolQuestionHeader[level] || '';
-  // }
+  private getQuestionContext(classConfig: ClassConfig): string {
+    const level = classConfig.id.includes('ssc') ? 'SSC' :
+      classConfig.id.includes('hsc') ? 'HSC' :
+        classConfig.id.includes('bsc') ? 'BSC' : 'MSC';
+
+    return level ? `Generate questions suitable for ${level} level students.` : '';
+  }
 
   private getFallbackQuestions(subject: string, count: number, type: 'mcq' | 'short' | 'long'): any[] {
     const questions = [];
@@ -271,7 +277,7 @@ Important guidelines:
     for (let i = 0; i < count; i++) {
       const id = `${type}-${i + 1}`;
       const question = `${i + 1}. ${subjectName} বিষয়ে ${type === 'mcq' ? 'বহুনির্বাচনি' : type === 'short' ? 'সংক্ষিপ্ত' : 'বিস্তারিত'} প্রশ্ন নম্বর ${i + 1}`;
-      
+
       if (type === 'mcq') {
         questions.push({
           id,
@@ -301,20 +307,37 @@ Important guidelines:
   }
 
   private extractTopicsFromPrompt(prompt: string, documents: string[]): string[] {
-    // Simple extraction - in real implementation use NLP
+    // Enhanced topic extraction with NLP-like matching
     const topicKeywords = [
-      'অধ্যায়', 'chapter', 'topic', 'unit', 'বিষয়', 
-      'পদার্থ', 'রসায়ন', 'গণিত', 'ইংরেজি', 'বাংলা'
+      'অধ্যায়', 'chapter', 'topic', 'unit', 'বিষয়', 'পাঠ্যাংশ',
+      'পদার্থ', 'রসায়ন', 'গণিত', 'ইংরেজি', 'বাংলা', 'জীববিজ্ঞান',
+      'পদার্থবিজ্ঞান', 'রসায়নবিজ্ঞান', 'সাহিত্য', 'ব্যাকরণ', 'পরিমাপ',
+      'গতি', 'তাপ', 'তড়িৎ', 'চুম্বক', 'জীবকোষ', 'উদ্ভিদ', 'প্রাণী'
     ];
+
+    const foundTopics = new Set<string>();
     
-    const foundTopics = [];
+    // Extract from prompt
     for (const keyword of topicKeywords) {
-      if (prompt.toLowerCase().includes(keyword)) {
-        foundTopics.push(keyword.charAt(0).toUpperCase() + keyword.slice(1));
+      if (prompt.toLowerCase().includes(keyword.toLowerCase())) {
+        foundTopics.add(keyword);
       }
     }
-    
-    return foundTopics.length > 0 ? foundTopics : ['Chapter 1', 'Chapter 2', 'Chapter 3'];
+
+    // Extract from documents (first 1000 characters)
+    const docText = documents.join(' ').substring(0, 1000);
+    for (const keyword of topicKeywords) {
+      if (docText.toLowerCase().includes(keyword.toLowerCase())) {
+        foundTopics.add(keyword);
+      }
+    }
+
+    // Add numbered chapters if no topics found
+    if (foundTopics.size === 0) {
+      return ['অধ্যায় ১', 'অধ্যায় ২', 'অধ্যায় ৩'];
+    }
+
+    return Array.from(foundTopics);
   }
 
   private generateInstructions(classConfig: ClassConfig): string[] {
@@ -680,14 +703,11 @@ Important guidelines:
   ): Promise<{ response: string; regeneratedContent: string }> {
     try {
       const prompt = `
-
-
+${this.getQuestionContext(classConfig)}
 Regenerate the following section content for ${classConfig.name} ${subject}:
 ${context}
-
 Current content:
 ${sectionContent}
-
 Improvements needed:
 - Enhance clarity and educational value
 - Ensure alignment with curriculum
@@ -697,7 +717,7 @@ Improvements needed:
 
       const model = this.googleAI('gemini-1.5-flash');
       const { text } = await generateText({ model, prompt });
-      
+
       return {
         response: 'Section successfully regenerated with improvements',
         regeneratedContent: text
@@ -723,9 +743,14 @@ User message: ${message}
 Previous conversation context: ${previousMessages.slice(-3).map(m => m.content).join('\n')}
       `;
 
-      const model = this.googleAI('gemini-1.5-flash');
-      const { text } = await generateText({ model, prompt });
+      const model = this.googleAI('gemini-1.5-flash', {
+        temperature: 0.7,
+        maxTokens: 1000,
+        topP: 0.9,
+      });
       
+      const { text } = await generateText({ model, prompt });
+
       return {
         response: text,
         htmlOutput: undefined
